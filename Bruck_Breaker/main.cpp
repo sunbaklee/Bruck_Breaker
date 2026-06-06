@@ -7,18 +7,21 @@
 
 #define PI 3.14159265f
 
-// --- 게임 상태 및 스테이지 관리 ---
+// --- 게임 상태 및 모드 관리 ---
 typedef enum { MENU, PLAYING, STAGE_CLEAR, ALL_CLEAR } GameState;
 GameState currentState = MENU;
 
+bool isEndlessMode = false;
 int currentStage = 1;
 int maxStage = 3;
 
-// 시간 측정용 변수
+// 시간 측정 및 기록용 변수
 int startTime = 0;
-int accumulatedTime = 0; // 플레이한 총 시간 (ms)
+int accumulatedTime = 0;
 int finalClearTime = 0;
-float bestTimeSeconds = 9999.0f; // 파일에서 불러올 최고 기록
+
+float bestTimeSeconds = 9999.0f; // 스토리 모드 최고 기록 (초)
+int bestWave = 0;                // 무한 모드 최고 웨이브
 
 // --- 전역 변수 ---
 float blockRotX = 15.0f;
@@ -44,50 +47,63 @@ float stars[NUM_STARS][3];
 void loadHighScore() {
     FILE* fp = fopen("score.txt", "r");
     if (fp != NULL) {
-        fscanf(fp, "%f", &bestTimeSeconds);
+        // 스토리 최고시간, 무한모드 최고웨이브 순으로 읽기
+        if (fscanf(fp, "%f %d", &bestTimeSeconds, &bestWave) != 2) {
+            // 기존 파일 형식이 호환되지 않으면 초기화
+            bestTimeSeconds = 9999.0f;
+            bestWave = 0;
+        }
         fclose(fp);
     }
 }
 
-void saveHighScore(float newTimeSeconds) {
-    if (newTimeSeconds < bestTimeSeconds) {
-        bestTimeSeconds = newTimeSeconds;
-        FILE* fp = fopen("score.txt", "w");
-        if (fp != NULL) {
-            fprintf(fp, "%f", bestTimeSeconds);
-            fclose(fp);
-        }
+void saveHighScore() {
+    FILE* fp = fopen("score.txt", "w");
+    if (fp != NULL) {
+        fprintf(fp, "%f %d", bestTimeSeconds, bestWave);
+        fclose(fp);
     }
 }
 
-// --- 스테이지 초기화 ---
+// --- 스테이지 초기화 (코어 파괴 룰에 맞춘 재구성) ---
 void initStage(int stage) {
     // 공 위치 및 속도 초기화
     ballX = 0.0f; ballY = -4.0f;
     ballSpeedX = 0.05f; ballSpeedY = 0.12f;
-
-    // 블록 회전 초기화
     blockRotX = 15.0f; blockRotY = -15.0f;
 
-    // 스테이지별 벽돌 배치
     for (int x = 0; x < 3; x++) {
         for (int y = 0; y < 3; y++) {
             for (int z = 0; z < 3; z++) {
-                if (stage == 1) {
-                    // Stage 1: 십자가 모양 (가운데 축들만)
-                    activeBricks[x][y][z] = (x == 1 && y == 1) || (y == 1 && z == 1) || (x == 1 && z == 1);
-                }
-                else if (stage == 2) {
-                    // Stage 2: 속이 빈 큐브 (겉면만)
-                    activeBricks[x][y][z] = (x == 0 || x == 2 || y == 0 || y == 2 || z == 0 || z == 2);
+                if (isEndlessMode) {
+                    // 무한 모드: 코어 주변은 단단하게, 겉은 랜덤으로 생성
+                    if (x == 1 && y == 1 && z == 1) {
+                        activeBricks[x][y][z] = true;
+                    }
+                    else {
+                        // 75% 확률로 블록 생성 (웨이브가 진행될수록 점점 복잡해지는 느낌)
+                        activeBricks[x][y][z] = (rand() % 100 < 75);
+                    }
                 }
                 else {
-                    // Stage 3: 꽉 찬 3x3x3
-                    activeBricks[x][y][z] = true;
+                    if (stage == 1) {
+                        // Stage 1: 기본 십자가 형태 (코어가 훤히 보임)
+                        activeBricks[x][y][z] = (x == 1 && y == 1) || (y == 1 && z == 1) || (x == 1 && z == 1);
+                    }
+                    else if (stage == 2) {
+                        // Stage 2: 뼈대 형태 (모서리 공간만 비어있음)
+                        activeBricks[x][y][z] = !((x != 1) && (y != 1) && (z != 1));
+                    }
+                    else {
+                        // Stage 3: 꽉 찬 3x3x3 큐브 (코어를 완벽히 보호)
+                        activeBricks[x][y][z] = true;
+                    }
                 }
             }
         }
     }
+    // 어떤 모드든 중앙 파란색 코어는 무조건 활성화
+    activeBricks[1][1][1] = true;
 }
 
 // --- 초기화 함수 ---
@@ -109,11 +125,10 @@ void init() {
         stars[i][2] = (rand() % 400 - 200) / 10.0f - 10.0f;
     }
 
-    loadHighScore(); // 최고 기록 로드
-    initStage(currentStage);
+    loadHighScore();
 }
 
-// --- 별, 벽, 벽돌, 공 그리기 (이전 코드와 동일하되 생략 없이 포함) ---
+// --- 별, 벽, 공 충돌 검사 등 그리기 로직 ---
 void drawAndMoveStars() {
     glDisable(GL_LIGHTING);
     glPointSize(2.0f);
@@ -209,28 +224,34 @@ void checkCollision() {
 }
 
 void checkStageClear() {
-    bool isClear = true;
-    for (int x = 0; x < 3; x++) {
-        for (int y = 0; y < 3; y++) {
-            for (int z = 0; z < 3; z++) {
-                if (activeBricks[x][y][z]) {
-                    isClear = false;
-                    break;
-                }
-            }
-        }
-    }
-
-    if (isClear) {
+    // 룰 변경: 파란색 중앙 블록([1][1][1])이 파괴되었는지 검사
+    if (!activeBricks[1][1][1]) {
         accumulatedTime += (glutGet(GLUT_ELAPSED_TIME) - startTime);
 
-        if (currentStage < maxStage) {
-            currentState = STAGE_CLEAR;
+        if (isEndlessMode) {
+            currentStage++; // 다음 웨이브로 즉시 진입
+            if (currentStage > bestWave) {
+                bestWave = currentStage;
+                saveHighScore(); // 최고 웨이브 즉시 저장
+            }
+            initStage(currentStage);
+            startTime = glutGet(GLUT_ELAPSED_TIME);
         }
         else {
-            currentState = ALL_CLEAR;
-            finalClearTime = accumulatedTime;
-            saveHighScore(finalClearTime / 1000.0f);
+            if (currentStage < maxStage) {
+                currentState = STAGE_CLEAR;
+            }
+            else {
+                currentState = ALL_CLEAR;
+                finalClearTime = accumulatedTime;
+
+                // 최고 기록 갱신
+                float finalTimeSeconds = finalClearTime / 1000.0f;
+                if (finalTimeSeconds < bestTimeSeconds) {
+                    bestTimeSeconds = finalTimeSeconds;
+                    saveHighScore();
+                }
+            }
         }
     }
 }
@@ -250,7 +271,8 @@ void draw3x3x3Bricks() {
                 glPushMatrix();
                 glTranslatef(x * spacing, y * spacing, z * spacing);
 
-                if (x == 0 && y == 0 && z == 0) glColor3f(0.0f, 1.0f, 1.0f);
+                // 코어 색상을 파란색으로 명확하게 지정
+                if (x == 0 && y == 0 && z == 0) glColor3f(0.2f, 0.4f, 1.0f); // Blue Core
                 else glColor3f(0.3f, 0.3f, 0.4f);
 
                 glutSolidCube(1.0f);
@@ -277,7 +299,7 @@ void draw2DBall(float radius) {
 }
 
 void drawAndMoveBall() {
-    if (currentState != PLAYING) return; // 게임 중일 때만 움직임
+    if (currentState != PLAYING) return;
 
     ballY += ballSpeedY;
     ballX += ballSpeedX;
@@ -300,7 +322,7 @@ void drawAndMoveBall() {
     }
 
     checkCollision();
-    checkStageClear(); // 클리어 여부 확인
+    checkStageClear();
 
     float currentSpeed = sqrt(ballSpeedX * ballSpeedX + ballSpeedY * ballSpeedY);
     if (currentSpeed > maxSpeed) {
@@ -342,45 +364,56 @@ void drawUI() {
     char textBuffer[128];
 
     if (currentState == MENU) {
-        // 메뉴 화면 (프로필)
-        renderText(w / 2 - 150, h / 2 + 50, GLUT_BITMAP_TIMES_ROMAN_24, "OCTAGON REVERSE GRAVITY", 0.0f, 1.0f, 1.0f);
+        // 메뉴 화면
+        renderText(w / 2 - 170, h / 2 + 80, GLUT_BITMAP_TIMES_ROMAN_24, "OCTAGON REVERSE GRAVITY", 0.0f, 1.0f, 1.0f);
+
+        // 최고 기록 표시
         if (bestTimeSeconds < 9999.0f) {
-            sprintf(textBuffer, "Best Time: %.3f sec", bestTimeSeconds);
-            renderText(w / 2 - 80, h / 2, GLUT_BITMAP_HELVETICA_18, textBuffer, 1.0f, 1.0f, 0.0f);
+            sprintf(textBuffer, "Story Best Time: %.3f sec", bestTimeSeconds);
+            renderText(w / 2 - 100, h / 2 + 30, GLUT_BITMAP_HELVETICA_18, textBuffer, 1.0f, 1.0f, 0.0f);
         }
-        else {
-            renderText(w / 2 - 80, h / 2, GLUT_BITMAP_HELVETICA_18, "No Record Yet", 0.5f, 0.5f, 0.5f);
+        if (bestWave > 0) {
+            sprintf(textBuffer, "Endless Best Wave: %d", bestWave);
+            renderText(w / 2 - 100, h / 2, GLUT_BITMAP_HELVETICA_18, textBuffer, 1.0f, 0.5f, 0.0f);
         }
-        renderText(w / 2 - 100, h / 2 - 50, GLUT_BITMAP_HELVETICA_18, "Press 'ENTER' to Start", 1.0f, 1.0f, 1.0f);
+
+        renderText(w / 2 - 100, h / 2 - 50, GLUT_BITMAP_HELVETICA_18, "Press '1' - Story Mode", 1.0f, 1.0f, 1.0f);
+        renderText(w / 2 - 100, h / 2 - 80, GLUT_BITMAP_HELVETICA_18, "Press '2' - Endless Mode", 1.0f, 1.0f, 1.0f);
     }
     else if (currentState == PLAYING) {
-        // 플레이 중 타이머
+        // 플레이 중 UI
         int currentElapsed = accumulatedTime + (glutGet(GLUT_ELAPSED_TIME) - startTime);
         int minutes = (currentElapsed / 1000) / 60;
         int seconds = (currentElapsed / 1000) % 60;
         int milliseconds = currentElapsed % 1000;
 
-        sprintf(textBuffer, "Stage: %d / 3", currentStage);
-        renderText(20.0f, h - 30.0f, GLUT_BITMAP_HELVETICA_18, textBuffer, 1.0f, 1.0f, 1.0f);
+        if (isEndlessMode) {
+            sprintf(textBuffer, "Wave: %d", currentStage);
+            renderText(20.0f, h - 30.0f, GLUT_BITMAP_HELVETICA_18, textBuffer, 1.0f, 0.5f, 0.0f);
+            renderText(20.0f, 20.0f, GLUT_BITMAP_HELVETICA_18, "Press 'ESC' to Quit", 0.6f, 0.6f, 0.6f);
+        }
+        else {
+            sprintf(textBuffer, "Stage: %d / 3", currentStage);
+            renderText(20.0f, h - 30.0f, GLUT_BITMAP_HELVETICA_18, textBuffer, 1.0f, 1.0f, 1.0f);
+        }
 
         sprintf(textBuffer, "Time: %02d:%02d.%03d", minutes, seconds, milliseconds);
         renderText(20.0f, h - 55.0f, GLUT_BITMAP_HELVETICA_18, textBuffer, 1.0f, 1.0f, 1.0f);
     }
     else if (currentState == STAGE_CLEAR) {
-        // 스테이지 클리어
-        sprintf(textBuffer, "STAGE %d CLEAR!", currentStage);
-        renderText(w / 2 - 80, h / 2 + 20, GLUT_BITMAP_TIMES_ROMAN_24, textBuffer, 0.0f, 1.0f, 0.0f);
+        sprintf(textBuffer, "STAGE %d CORE DUMPED!", currentStage);
+        renderText(w / 2 - 110, h / 2 + 20, GLUT_BITMAP_TIMES_ROMAN_24, textBuffer, 0.0f, 1.0f, 0.0f);
         renderText(w / 2 - 110, h / 2 - 20, GLUT_BITMAP_HELVETICA_18, "Press 'ENTER' for Next Stage", 1.0f, 1.0f, 1.0f);
     }
     else if (currentState == ALL_CLEAR) {
-        // 게임 모두 클리어
-        renderText(w / 2 - 120, h / 2 + 50, GLUT_BITMAP_TIMES_ROMAN_24, "CONGRATULATIONS!", 1.0f, 0.5f, 0.0f);
-        renderText(w / 2 - 80, h / 2 + 10, GLUT_BITMAP_HELVETICA_18, "All Stages Cleared", 1.0f, 1.0f, 1.0f);
+        renderText(w / 2 - 120, h / 2 + 70, GLUT_BITMAP_TIMES_ROMAN_24, "CONGRATULATIONS!", 1.0f, 0.5f, 0.0f);
+        renderText(w / 2 - 125, h / 2 + 30, GLUT_BITMAP_HELVETICA_18, "All Cores Dumped Successfully", 0.0f, 1.0f, 1.0f);
+        renderText(w / 2 - 80, h / 2, GLUT_BITMAP_HELVETICA_18, "(Memory Leaks: 0)", 0.5f, 1.0f, 0.5f);
 
         sprintf(textBuffer, "Final Time: %.3f sec", finalClearTime / 1000.0f);
-        renderText(w / 2 - 90, h / 2 - 30, GLUT_BITMAP_HELVETICA_18, textBuffer, 1.0f, 1.0f, 0.0f);
+        renderText(w / 2 - 90, h / 2 - 40, GLUT_BITMAP_HELVETICA_18, textBuffer, 1.0f, 1.0f, 0.0f);
 
-        renderText(w / 2 - 110, h / 2 - 70, GLUT_BITMAP_HELVETICA_18, "Press 'ENTER' to Return Menu", 0.8f, 0.8f, 0.8f);
+        renderText(w / 2 - 110, h / 2 - 80, GLUT_BITMAP_HELVETICA_18, "Press 'ENTER' to Return Menu", 0.8f, 0.8f, 0.8f);
     }
 
     glEnable(GL_DEPTH_TEST);
@@ -394,26 +427,41 @@ void drawUI() {
 
 // --- 입력 처리 (키보드, 마우스) ---
 void keyboard(unsigned char key, int x, int y) {
-    if (key == 13) { // Enter 키
-        if (currentState == MENU) {
+    if (currentState == MENU) {
+        if (key == '1') {
+            isEndlessMode = false;
             currentStage = 1;
             accumulatedTime = 0;
             initStage(currentStage);
             currentState = PLAYING;
             startTime = glutGet(GLUT_ELAPSED_TIME);
         }
-        else if (currentState == STAGE_CLEAR) {
+        else if (key == '2') {
+            isEndlessMode = true;
+            currentStage = 1;
+            accumulatedTime = 0;
+            initStage(currentStage);
+            currentState = PLAYING;
+            startTime = glutGet(GLUT_ELAPSED_TIME);
+        }
+    }
+    else if (key == 13) { // Enter 키
+        if (currentState == STAGE_CLEAR) {
             currentStage++;
             initStage(currentStage);
             currentState = PLAYING;
             startTime = glutGet(GLUT_ELAPSED_TIME);
         }
         else if (currentState == ALL_CLEAR) {
-            loadHighScore(); // 메뉴로 돌아갈 때 최고기록 다시 갱신
+            loadHighScore();
             currentState = MENU;
         }
     }
     else if (currentState == PLAYING) {
+        if (key == 27 && isEndlessMode) { // ESC로 무한모드 종료
+            loadHighScore();
+            currentState = MENU;
+        }
         if (key == 'a' || key == 'A') wallRotZ += 5.0f;
         if (key == 'd' || key == 'D') wallRotZ -= 5.0f;
     }
@@ -451,14 +499,13 @@ void display() {
 
     drawAndMoveStars();
 
-    // 게임 진행 중에만 오브젝트 렌더링
     if (currentState == PLAYING || currentState == STAGE_CLEAR) {
         drawOctagonWall();
         draw3x3x3Bricks();
         drawAndMoveBall();
     }
 
-    drawUI(); // UI는 항상 렌더링 (상태에 따라 내용 변경)
+    drawUI();
 
     glutSwapBuffers();
 }
@@ -480,7 +527,7 @@ int main(int argc, char** argv) {
     glutInit(&argc, argv);
     glutInitDisplayMode(GLUT_DOUBLE | GLUT_RGB | GLUT_DEPTH);
     glutInitWindowSize(800, 800);
-    glutCreateWindow("Octagon Reverse Gravity - Full Game");
+    glutCreateWindow("Octagon Reverse Gravity - Core Breaker");
 
     init();
 
