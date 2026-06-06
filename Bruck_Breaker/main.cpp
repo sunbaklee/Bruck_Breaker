@@ -1,7 +1,9 @@
 #include <GL/glut.h>
 #include <math.h>
 #include <stdbool.h>
-#include <stdlib.h> // rand() 사용을 위해 추가
+#include <stdlib.h>
+#include <stdio.h>  // sprintf 사용을 위해 추가
+#pragma warning(disable:4996)
 
 #define PI 3.14159265f
 
@@ -16,11 +18,14 @@ float wallRotZ = 0.0f;
 
 bool activeBricks[3][3][3];
 
-// 공 속도 대폭 하향 조정
+// 공 속도 및 물리엔진 튜닝 (반대편까지 잘 닿도록 수정)
 float ballX = 0.0f, ballY = -4.0f;
-float ballSpeedX = 0.03f, ballSpeedY = 0.08f;
-float gravity = 0.003f;
-float maxSpeed = 0.18f; // 최대 속도 제한을 0.4에서 0.18로 대폭 낮춤
+float ballSpeedX = 0.05f, ballSpeedY = 0.12f;
+float gravity = 0.002f; // 중력을 살짝 약하게 하여 더 멀리 날아가게 함
+float maxSpeed = 0.25f; // 최대 속도 제한을 0.18에서 0.25로 늘려 반동 범위를 확보
+
+// 타이머용 변수
+int startTime = 0;
 
 // --- 우주 배경 파티클용 변수 ---
 #define NUM_STARS 200
@@ -28,7 +33,6 @@ float stars[NUM_STARS][3];
 
 // --- 초기화 함수 ---
 void init() {
-    // 특수효과가 잘 보이도록 어두운 남색 배경으로 변경
     glClearColor(0.05f, 0.05f, 0.1f, 1.0f);
     glEnable(GL_DEPTH_TEST);
 
@@ -40,7 +44,6 @@ void init() {
     glLightfv(GL_LIGHT0, GL_DIFFUSE, lightDiffuse);
     glEnable(GL_COLOR_MATERIAL);
 
-    // 벽돌 초기화
     for (int i = 0; i < 3; i++) {
         for (int j = 0; j < 3; j++) {
             for (int k = 0; k < 3; k++) {
@@ -49,29 +52,30 @@ void init() {
         }
     }
 
-    // 별(파티클) 위치 난수 초기화
     for (int i = 0; i < NUM_STARS; i++) {
-        stars[i][0] = (rand() % 400 - 200) / 10.0f; // X: -20 ~ 20
-        stars[i][1] = (rand() % 400 - 200) / 10.0f; // Y: -20 ~ 20
-        stars[i][2] = (rand() % 400 - 200) / 10.0f - 10.0f; // Z: -30 ~ 10
+        stars[i][0] = (rand() % 400 - 200) / 10.0f;
+        stars[i][1] = (rand() % 400 - 200) / 10.0f;
+        stars[i][2] = (rand() % 400 - 200) / 10.0f - 10.0f;
     }
+
+    // 프로그램 시작 시간 기록
+    startTime = glutGet(GLUT_ELAPSED_TIME);
 }
 
 // --- 우주 배경 별 그리기 및 이동 ---
 void drawAndMoveStars() {
-    glDisable(GL_LIGHTING); // 별은 빛의 영향을 받지 않게 자체 발광 느낌
+    glDisable(GL_LIGHTING);
     glPointSize(2.0f);
     glBegin(GL_POINTS);
     for (int i = 0; i < NUM_STARS; i++) {
-        // Z축 거리에 따라 약간의 명암 조절
         float brightness = (stars[i][2] + 30.0f) / 40.0f;
         glColor3f(brightness * 0.8f, brightness * 0.9f, brightness);
 
         glVertex3f(stars[i][0], stars[i][1], stars[i][2]);
 
-        stars[i][2] += 0.05f; // 카메라 쪽으로 이동
+        stars[i][2] += 0.05f;
         if (stars[i][2] > 10.0f) {
-            stars[i][2] = -30.0f; // 화면 밖으로 나가면 다시 멀리서 생성
+            stars[i][2] = -30.0f;
             stars[i][0] = (rand() % 400 - 200) / 10.0f;
             stars[i][1] = (rand() % 400 - 200) / 10.0f;
         }
@@ -85,23 +89,20 @@ void drawOctagonWall() {
     glPushMatrix();
     glRotatef(wallRotZ, 0.0f, 0.0f, 1.0f);
 
-    // 시간에 따라 변하는 네온 색상 계산
     float timeValue = glutGet(GLUT_ELAPSED_TIME) / 1000.0f;
     float r = (sin(timeValue * 2.0f) + 1.0f) * 0.5f;
     float g = (cos(timeValue * 1.5f) + 1.0f) * 0.5f;
     float b = 1.0f;
 
-    // 네온 글로우(Glow) 효과를 위한 블렌딩 활성화
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
     glDisable(GL_LIGHTING);
 
     float radius = 7.5f;
 
-    // 여러 겹의 선을 그려서 빛 번짐(Glow) 효과 구현
     for (int thickness = 1; thickness <= 3; thickness++) {
-        glLineWidth(9.0f - thickness * 2.5f); // 바깥쪽은 굵게, 안쪽은 얇게
-        glColor4f(r, g, b, 0.2f * thickness); // 바깥쪽은 투명하게, 안쪽은 진하게
+        glLineWidth(9.0f - thickness * 2.5f);
+        glColor4f(r, g, b, 0.2f * thickness);
 
         glBegin(GL_LINE_LOOP);
         for (int i = 0; i < 8; i++) {
@@ -111,7 +112,6 @@ void drawOctagonWall() {
         glEnd();
     }
 
-    // 심지가 되는 가장 얇고 밝은 흰색 선
     glLineWidth(2.0f);
     glColor4f(1.0f, 1.0f, 1.0f, 0.8f);
     glBegin(GL_LINE_LOOP);
@@ -157,9 +157,9 @@ void checkCollision() {
                 if (dist < 0.9f) {
                     activeBricks[x + 1][y + 1][z + 1] = false;
 
-                    // 공 튕기기 (가속도를 1.2에서 1.05로 완화하여 너무 미쳐날뛰지 않게 함)
-                    ballSpeedX *= -1.05f;
-                    ballSpeedY *= -1.05f;
+                    // 파괴 시 튕기는 힘 유지
+                    ballSpeedX *= -1.02f;
+                    ballSpeedY *= -1.02f;
                     return;
                 }
             }
@@ -183,17 +183,15 @@ void draw3x3x3Bricks() {
                 glPushMatrix();
                 glTranslatef(x * spacing, y * spacing, z * spacing);
 
-                // 어두운 배경에 맞춰 큐브 색상 변경
                 if (x == 0 && y == 0 && z == 0) {
-                    glColor3f(0.0f, 1.0f, 1.0f); // 코어는 밝은 시안색
+                    glColor3f(0.0f, 1.0f, 1.0f);
                 }
                 else {
-                    glColor3f(0.3f, 0.3f, 0.4f); // 나머지는 어두운 푸른 회색
+                    glColor3f(0.3f, 0.3f, 0.4f);
                 }
 
                 glutSolidCube(1.0f);
 
-                // 테두리를 밝게 주어 SF 느낌 강화
                 glColor3f(0.5f, 0.8f, 1.0f);
                 glutWireCube(1.01f);
                 glPopMatrix();
@@ -206,7 +204,7 @@ void draw3x3x3Bricks() {
 // --- 2D 공 그리기 함수 ---
 void draw2DBall(float radius) {
     glDisable(GL_LIGHTING);
-    glColor3f(1.0f, 0.5f, 0.0f); // 배경에 잘 보이게 쨍한 주황색으로
+    glColor3f(1.0f, 0.5f, 0.0f);
 
     glBegin(GL_TRIANGLE_FAN);
     glVertex2f(0.0f, 0.0f);
@@ -228,7 +226,6 @@ void drawAndMoveBall() {
     float distFromCenter = sqrt(ballX * ballX + ballY * ballY);
     float wallRadius = 7.0f;
 
-    // 벽 충돌
     if (distFromCenter > wallRadius) {
         float nx = ballX / distFromCenter;
         float ny = ballY / distFromCenter;
@@ -237,7 +234,7 @@ void drawAndMoveBall() {
         ballSpeedX = ballSpeedX - 2 * dot * nx;
         ballSpeedY = ballSpeedY - 2 * dot * ny;
 
-        // 벽에 부딪힐 때 가속도도 살짝만 주도록 완화 (1.05 -> 1.02)
+        // 벽 반사 시 운동 에너지를 살짝 보존하여 반대편 끝까지 닿게 함
         ballSpeedX *= 1.02f;
         ballSpeedY *= 1.02f;
 
@@ -247,7 +244,6 @@ void drawAndMoveBall() {
 
     checkCollision();
 
-    // 부드러운 속도 제한 적용 (공이 너무 빠르지 않게 제어)
     float currentSpeed = sqrt(ballSpeedX * ballSpeedX + ballSpeedY * ballSpeedY);
     if (currentSpeed > maxSpeed) {
         ballSpeedX = (ballSpeedX / currentSpeed) * maxSpeed;
@@ -258,6 +254,50 @@ void drawAndMoveBall() {
     glTranslatef(ballX, ballY, 0.0f);
     draw2DBall(0.4f);
     glPopMatrix();
+}
+
+// --- UI (타이머) 그리기 함수 ---
+void drawUI() {
+    // 2D 직교 투영으로 전환하여 화면에 고정된 텍스트 출력
+    glMatrixMode(GL_PROJECTION);
+    glPushMatrix();
+    glLoadIdentity();
+    int w = glutGet(GLUT_WINDOW_WIDTH);
+    int h = glutGet(GLUT_WINDOW_HEIGHT);
+    gluOrtho2D(0, w, 0, h);
+
+    glMatrixMode(GL_MODELVIEW);
+    glPushMatrix();
+    glLoadIdentity();
+
+    glDisable(GL_LIGHTING);
+    glDisable(GL_DEPTH_TEST);
+
+    // 경과 시간 계산 (밀리초)
+    int elapsedTime = glutGet(GLUT_ELAPSED_TIME) - startTime;
+    int minutes = (elapsedTime / 1000) / 60;
+    int seconds = (elapsedTime / 1000) % 60;
+    int milliseconds = elapsedTime % 1000;
+
+    char timeStr[64];
+    sprintf(timeStr, "Time: %02d:%02d.%03d", minutes, seconds, milliseconds);
+
+    // 텍스트 위치 및 색상 설정
+    glColor3f(1.0f, 1.0f, 1.0f); // 흰색
+    glRasterPos2f(20.0f, h - 30.0f); // 좌측 상단
+
+    // 문자열 한 글자씩 출력
+    for (char* c = timeStr; *c != '\0'; c++) {
+        glutBitmapCharacter(GLUT_BITMAP_HELVETICA_18, *c);
+    }
+
+    glEnable(GL_DEPTH_TEST);
+    glEnable(GL_LIGHTING);
+
+    glPopMatrix();
+    glMatrixMode(GL_PROJECTION);
+    glPopMatrix();
+    glMatrixMode(GL_MODELVIEW);
 }
 
 // --- 마우스 클릭 처리 ---
@@ -311,10 +351,13 @@ void display() {
         0.0, 0.0, 0.0,
         0.0, 1.0, 0.0);
 
-    drawAndMoveStars();  // 우주 배경 추가
+    drawAndMoveStars();
     drawOctagonWall();
     draw3x3x3Bricks();
     drawAndMoveBall();
+
+    // UI (타이머) 그리기 - 가장 마지막에 그려서 최상단에 띄움
+    drawUI();
 
     glutSwapBuffers();
 }
@@ -337,7 +380,7 @@ int main(int argc, char** argv) {
     glutInit(&argc, argv);
     glutInitDisplayMode(GLUT_DOUBLE | GLUT_RGB | GLUT_DEPTH);
     glutInitWindowSize(800, 800);
-    glutCreateWindow("Octagon Reverse Gravity - Neon Space Edition");
+    glutCreateWindow("Octagon Reverse Gravity - Timer Edition");
 
     init();
 
