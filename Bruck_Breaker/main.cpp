@@ -25,7 +25,7 @@ int bestWave = 0;
 
 // 필살기(Z키) 쿨타임 및 사용 횟수 관련 변수
 int lastSkillTime = -10000;
-int skillUseCount = 0; // 스킬 사용 횟수 추적
+int skillUseCount = 0;
 
 // --- 전역 변수 ---
 float blockRotX = 15.0f;
@@ -74,7 +74,7 @@ void initStage(int stage) {
     blockRotX = 15.0f; blockRotY = -15.0f;
 
     lastSkillTime = -10000;
-    skillUseCount = 0; // 스테이지가 시작될 때마다 스킬 사용 횟수 초기화 (1회 정확도 보장)
+    skillUseCount = 0;
 
     for (int x = 0; x < 3; x++) {
         for (int y = 0; y < 3; y++) {
@@ -368,7 +368,8 @@ void drawUI() {
     char textBuffer[128];
 
     if (currentState == MENU) {
-        renderText(w / 2 - 170, h / 2 + 80, GLUT_BITMAP_TIMES_ROMAN_24, "OCTAGON REVERSE GRAVITY", 0.0f, 1.0f, 1.0f);
+        // 타이틀 이름 변경 및 글자 중앙 정렬 조정
+        renderText(w / 2 - 110, h / 2 + 80, GLUT_BITMAP_TIMES_ROMAN_24, "3D BRICK BREAKER", 0.0f, 1.0f, 1.0f);
 
         if (bestTimeSeconds < 9999.0f) {
             sprintf(textBuffer, "Story Best Time: %.3f sec", bestTimeSeconds);
@@ -390,7 +391,8 @@ void drawUI() {
         renderText(w / 2 - 170, h / 2 + 10, GLUT_BITMAP_HELVETICA_18, "2. 'A' / 'D' Keys : Rotate the octagon wall", 1.0f, 1.0f, 1.0f);
         renderText(w / 2 - 170, h / 2 - 20, GLUT_BITMAP_HELVETICA_18, "3. Break the BLUE CORE to clear!", 0.2f, 0.6f, 1.0f);
 
-        renderText(w / 2 - 170, h / 2 - 50, GLUT_BITMAP_HELVETICA_18, "4. 'Z' Key : Dash to Center (10s CD)", 1.0f, 0.4f, 1.0f);
+        // Z 스킬에 대한 새로운 설명 추가 및 X 좌표 조절
+        renderText(w / 2 - 200, h / 2 - 50, GLUT_BITMAP_HELVETICA_18, "4. 'Z' Key : Dash to Target (1st: Core, Next: Random) (10s CD)", 1.0f, 0.4f, 1.0f);
 
         renderText(w / 2 - 140, h / 2 - 100, GLUT_BITMAP_HELVETICA_18, "Press 'ESC' or 'ENTER' to Return", 0.6f, 0.6f, 0.6f);
     }
@@ -425,19 +427,20 @@ void drawUI() {
         }
     }
     else if (currentState == STAGE_CLEAR) {
-        sprintf(textBuffer, "STAGE %d CORE DUMPED!", currentStage);
-        renderText(w / 2 - 110, h / 2 + 20, GLUT_BITMAP_TIMES_ROMAN_24, textBuffer, 0.0f, 1.0f, 0.0f);
+        // 문구 깔끔하게 변경 및 중앙 정렬 조정
+        sprintf(textBuffer, "STAGE %d CLEAR!", currentStage);
+        renderText(w / 2 - 80, h / 2 + 20, GLUT_BITMAP_TIMES_ROMAN_24, textBuffer, 0.0f, 1.0f, 0.0f);
         renderText(w / 2 - 110, h / 2 - 20, GLUT_BITMAP_HELVETICA_18, "Press 'ENTER' for Next Stage", 1.0f, 1.0f, 1.0f);
     }
     else if (currentState == ALL_CLEAR) {
-        renderText(w / 2 - 120, h / 2 + 70, GLUT_BITMAP_TIMES_ROMAN_24, "CONGRATULATIONS!", 1.0f, 0.5f, 0.0f);
-        renderText(w / 2 - 125, h / 2 + 30, GLUT_BITMAP_HELVETICA_18, "All Cores Dumped Successfully", 0.0f, 1.0f, 1.0f);
-        renderText(w / 2 - 80, h / 2, GLUT_BITMAP_HELVETICA_18, "(Memory Leaks: 0)", 0.5f, 1.0f, 0.5f);
+        // 문구 변경 및 메모리 누수 텍스트 삭제
+        renderText(w / 2 - 120, h / 2 + 60, GLUT_BITMAP_TIMES_ROMAN_24, "CONGRATULATIONS!", 1.0f, 0.5f, 0.0f);
+        renderText(w / 2 - 70, h / 2 + 20, GLUT_BITMAP_HELVETICA_18, "All Stages Cleared!", 0.0f, 1.0f, 1.0f);
 
         sprintf(textBuffer, "Final Time: %.3f sec", finalClearTime / 1000.0f);
-        renderText(w / 2 - 90, h / 2 - 40, GLUT_BITMAP_HELVETICA_18, textBuffer, 1.0f, 1.0f, 0.0f);
+        renderText(w / 2 - 90, h / 2 - 20, GLUT_BITMAP_HELVETICA_18, textBuffer, 1.0f, 1.0f, 0.0f);
 
-        renderText(w / 2 - 110, h / 2 - 80, GLUT_BITMAP_HELVETICA_18, "Press 'ENTER' to Return Menu", 0.8f, 0.8f, 0.8f);
+        renderText(w / 2 - 110, h / 2 - 60, GLUT_BITMAP_HELVETICA_18, "Press 'ENTER' to Return Menu", 0.8f, 0.8f, 0.8f);
     }
 
     glEnable(GL_DEPTH_TEST);
@@ -504,19 +507,15 @@ void keyboard(unsigned char key, int x, int y) {
                 float targetX = 0.0f;
                 float targetY = 0.0f;
 
-                // 1회차(0)는 정확히 중앙으로, 2회차(1 이상)부터는 다른 랜덤 좌표로
                 if (skillUseCount > 0) {
-                    // -2.5 ~ 2.5 사이의 랜덤 좌표 지정 (코어를 빗나가게 됨)
                     targetX = (rand() % 500 - 250) / 100.0f;
                     targetY = (rand() % 500 - 250) / 100.0f;
 
-                    // 만약 공의 현재 위치와 너무 비슷해서 움직임이 없으면 보정
                     if (fabs(targetX - ballX) < 0.5f && fabs(targetY - ballY) < 0.5f) {
                         targetX += 1.5f;
                     }
                 }
 
-                // 목표 지점을 향하는 방향 벡터 계산
                 float dx = targetX - ballX;
                 float dy = targetY - ballY;
                 float dist = sqrt(dx * dx + dy * dy);
@@ -527,7 +526,7 @@ void keyboard(unsigned char key, int x, int y) {
                     ballSpeedY = (dy / dist) * dashSpeed;
                 }
                 lastSkillTime = currentTick;
-                skillUseCount++; // 스킬 사용 횟수 증가
+                skillUseCount++;
             }
         }
     }
@@ -593,7 +592,7 @@ int main(int argc, char** argv) {
     glutInit(&argc, argv);
     glutInitDisplayMode(GLUT_DOUBLE | GLUT_RGB | GLUT_DEPTH);
     glutInitWindowSize(800, 800);
-    glutCreateWindow("Octagon Reverse Gravity - Core Breaker");
+    glutCreateWindow("3D Brick Breaker"); // 타이틀명 변경
 
     init();
 
