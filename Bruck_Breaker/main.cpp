@@ -2,10 +2,23 @@
 #include <math.h>
 #include <stdbool.h>
 #include <stdlib.h>
-#include <stdio.h>  // sprintf 사용을 위해 추가
+#include <stdio.h>
 #pragma warning(disable:4996)
 
 #define PI 3.14159265f
+
+// --- 게임 상태 및 스테이지 관리 ---
+typedef enum { MENU, PLAYING, STAGE_CLEAR, ALL_CLEAR } GameState;
+GameState currentState = MENU;
+
+int currentStage = 1;
+int maxStage = 3;
+
+// 시간 측정용 변수
+int startTime = 0;
+int accumulatedTime = 0; // 플레이한 총 시간 (ms)
+int finalClearTime = 0;
+float bestTimeSeconds = 9999.0f; // 파일에서 불러올 최고 기록
 
 // --- 전역 변수 ---
 float blockRotX = 15.0f;
@@ -15,21 +28,67 @@ int lastMouseX, lastMouseY;
 bool isDragging = false;
 
 float wallRotZ = 0.0f;
-
 bool activeBricks[3][3][3];
 
-// 공 속도 및 물리엔진 튜닝 (반대편까지 잘 닿도록 수정)
+// 공 속도 및 물리엔진
 float ballX = 0.0f, ballY = -4.0f;
 float ballSpeedX = 0.05f, ballSpeedY = 0.12f;
-float gravity = 0.002f; // 중력을 살짝 약하게 하여 더 멀리 날아가게 함
-float maxSpeed = 0.25f; // 최대 속도 제한을 0.18에서 0.25로 늘려 반동 범위를 확보
+float gravity = 0.002f;
+float maxSpeed = 0.25f;
 
-// 타이머용 변수
-int startTime = 0;
-
-// --- 우주 배경 파티클용 변수 ---
+// 우주 배경 파티클
 #define NUM_STARS 200
 float stars[NUM_STARS][3];
+
+// --- 최고 기록 파일 입출력 ---
+void loadHighScore() {
+    FILE* fp = fopen("score.txt", "r");
+    if (fp != NULL) {
+        fscanf(fp, "%f", &bestTimeSeconds);
+        fclose(fp);
+    }
+}
+
+void saveHighScore(float newTimeSeconds) {
+    if (newTimeSeconds < bestTimeSeconds) {
+        bestTimeSeconds = newTimeSeconds;
+        FILE* fp = fopen("score.txt", "w");
+        if (fp != NULL) {
+            fprintf(fp, "%f", bestTimeSeconds);
+            fclose(fp);
+        }
+    }
+}
+
+// --- 스테이지 초기화 ---
+void initStage(int stage) {
+    // 공 위치 및 속도 초기화
+    ballX = 0.0f; ballY = -4.0f;
+    ballSpeedX = 0.05f; ballSpeedY = 0.12f;
+
+    // 블록 회전 초기화
+    blockRotX = 15.0f; blockRotY = -15.0f;
+
+    // 스테이지별 벽돌 배치
+    for (int x = 0; x < 3; x++) {
+        for (int y = 0; y < 3; y++) {
+            for (int z = 0; z < 3; z++) {
+                if (stage == 1) {
+                    // Stage 1: 십자가 모양 (가운데 축들만)
+                    activeBricks[x][y][z] = (x == 1 && y == 1) || (y == 1 && z == 1) || (x == 1 && z == 1);
+                }
+                else if (stage == 2) {
+                    // Stage 2: 속이 빈 큐브 (겉면만)
+                    activeBricks[x][y][z] = (x == 0 || x == 2 || y == 0 || y == 2 || z == 0 || z == 2);
+                }
+                else {
+                    // Stage 3: 꽉 찬 3x3x3
+                    activeBricks[x][y][z] = true;
+                }
+            }
+        }
+    }
+}
 
 // --- 초기화 함수 ---
 void init() {
@@ -44,25 +103,17 @@ void init() {
     glLightfv(GL_LIGHT0, GL_DIFFUSE, lightDiffuse);
     glEnable(GL_COLOR_MATERIAL);
 
-    for (int i = 0; i < 3; i++) {
-        for (int j = 0; j < 3; j++) {
-            for (int k = 0; k < 3; k++) {
-                activeBricks[i][j][k] = true;
-            }
-        }
-    }
-
     for (int i = 0; i < NUM_STARS; i++) {
         stars[i][0] = (rand() % 400 - 200) / 10.0f;
         stars[i][1] = (rand() % 400 - 200) / 10.0f;
         stars[i][2] = (rand() % 400 - 200) / 10.0f - 10.0f;
     }
 
-    // 프로그램 시작 시간 기록
-    startTime = glutGet(GLUT_ELAPSED_TIME);
+    loadHighScore(); // 최고 기록 로드
+    initStage(currentStage);
 }
 
-// --- 우주 배경 별 그리기 및 이동 ---
+// --- 별, 벽, 벽돌, 공 그리기 (이전 코드와 동일하되 생략 없이 포함) ---
 void drawAndMoveStars() {
     glDisable(GL_LIGHTING);
     glPointSize(2.0f);
@@ -70,9 +121,7 @@ void drawAndMoveStars() {
     for (int i = 0; i < NUM_STARS; i++) {
         float brightness = (stars[i][2] + 30.0f) / 40.0f;
         glColor3f(brightness * 0.8f, brightness * 0.9f, brightness);
-
         glVertex3f(stars[i][0], stars[i][1], stars[i][2]);
-
         stars[i][2] += 0.05f;
         if (stars[i][2] > 10.0f) {
             stars[i][2] = -30.0f;
@@ -84,7 +133,6 @@ void drawAndMoveStars() {
     glEnable(GL_LIGHTING);
 }
 
-// --- 8각형 네온사인 벽 그리기 ---
 void drawOctagonWall() {
     glPushMatrix();
     glRotatef(wallRotZ, 0.0f, 0.0f, 1.0f);
@@ -99,11 +147,9 @@ void drawOctagonWall() {
     glDisable(GL_LIGHTING);
 
     float radius = 7.5f;
-
     for (int thickness = 1; thickness <= 3; thickness++) {
         glLineWidth(9.0f - thickness * 2.5f);
         glColor4f(r, g, b, 0.2f * thickness);
-
         glBegin(GL_LINE_LOOP);
         for (int i = 0; i < 8; i++) {
             float theta = 2.0f * PI * (float)i / 8.0f;
@@ -111,7 +157,6 @@ void drawOctagonWall() {
         }
         glEnd();
     }
-
     glLineWidth(2.0f);
     glColor4f(1.0f, 1.0f, 1.0f, 0.8f);
     glBegin(GL_LINE_LOOP);
@@ -120,13 +165,11 @@ void drawOctagonWall() {
         glVertex3f(radius * cos(theta), radius * sin(theta), 0.0f);
     }
     glEnd();
-
     glDisable(GL_BLEND);
     glEnable(GL_LIGHTING);
     glPopMatrix();
 }
 
-// --- 공과 벽돌의 충돌 검사 및 처리 ---
 void checkCollision() {
     float spacing = 1.1f;
     float radX = blockRotX * PI / 180.0f;
@@ -156,8 +199,6 @@ void checkCollision() {
 
                 if (dist < 0.9f) {
                     activeBricks[x + 1][y + 1][z + 1] = false;
-
-                    // 파괴 시 튕기는 힘 유지
                     ballSpeedX *= -1.02f;
                     ballSpeedY *= -1.02f;
                     return;
@@ -167,7 +208,33 @@ void checkCollision() {
     }
 }
 
-// --- 3x3x3 입체 벽돌 그리기 ---
+void checkStageClear() {
+    bool isClear = true;
+    for (int x = 0; x < 3; x++) {
+        for (int y = 0; y < 3; y++) {
+            for (int z = 0; z < 3; z++) {
+                if (activeBricks[x][y][z]) {
+                    isClear = false;
+                    break;
+                }
+            }
+        }
+    }
+
+    if (isClear) {
+        accumulatedTime += (glutGet(GLUT_ELAPSED_TIME) - startTime);
+
+        if (currentStage < maxStage) {
+            currentState = STAGE_CLEAR;
+        }
+        else {
+            currentState = ALL_CLEAR;
+            finalClearTime = accumulatedTime;
+            saveHighScore(finalClearTime / 1000.0f);
+        }
+    }
+}
+
 void draw3x3x3Bricks() {
     glPushMatrix();
     glRotatef(blockRotX, 1.0f, 0.0f, 0.0f);
@@ -183,15 +250,10 @@ void draw3x3x3Bricks() {
                 glPushMatrix();
                 glTranslatef(x * spacing, y * spacing, z * spacing);
 
-                if (x == 0 && y == 0 && z == 0) {
-                    glColor3f(0.0f, 1.0f, 1.0f);
-                }
-                else {
-                    glColor3f(0.3f, 0.3f, 0.4f);
-                }
+                if (x == 0 && y == 0 && z == 0) glColor3f(0.0f, 1.0f, 1.0f);
+                else glColor3f(0.3f, 0.3f, 0.4f);
 
                 glutSolidCube(1.0f);
-
                 glColor3f(0.5f, 0.8f, 1.0f);
                 glutWireCube(1.01f);
                 glPopMatrix();
@@ -201,11 +263,9 @@ void draw3x3x3Bricks() {
     glPopMatrix();
 }
 
-// --- 2D 공 그리기 함수 ---
 void draw2DBall(float radius) {
     glDisable(GL_LIGHTING);
     glColor3f(1.0f, 0.5f, 0.0f);
-
     glBegin(GL_TRIANGLE_FAN);
     glVertex2f(0.0f, 0.0f);
     for (int i = 0; i <= 30; i++) {
@@ -213,12 +273,12 @@ void draw2DBall(float radius) {
         glVertex2f(radius * cos(angle), radius * sin(angle));
     }
     glEnd();
-
     glEnable(GL_LIGHTING);
 }
 
-// --- 공 움직임 및 벽 충돌 처리 ---
 void drawAndMoveBall() {
+    if (currentState != PLAYING) return; // 게임 중일 때만 움직임
+
     ballY += ballSpeedY;
     ballX += ballSpeedX;
     ballSpeedY += gravity;
@@ -229,20 +289,18 @@ void drawAndMoveBall() {
     if (distFromCenter > wallRadius) {
         float nx = ballX / distFromCenter;
         float ny = ballY / distFromCenter;
-
         float dot = ballSpeedX * nx + ballSpeedY * ny;
         ballSpeedX = ballSpeedX - 2 * dot * nx;
         ballSpeedY = ballSpeedY - 2 * dot * ny;
 
-        // 벽 반사 시 운동 에너지를 살짝 보존하여 반대편 끝까지 닿게 함
         ballSpeedX *= 1.02f;
         ballSpeedY *= 1.02f;
-
         ballX = nx * wallRadius;
         ballY = ny * wallRadius;
     }
 
     checkCollision();
+    checkStageClear(); // 클리어 여부 확인
 
     float currentSpeed = sqrt(ballSpeedX * ballSpeedX + ballSpeedY * ballSpeedY);
     if (currentSpeed > maxSpeed) {
@@ -256,9 +314,17 @@ void drawAndMoveBall() {
     glPopMatrix();
 }
 
-// --- UI (타이머) 그리기 함수 ---
+// --- 텍스트 렌더링 헬퍼 함수 ---
+void renderText(float x, float y, void* font, const char* string, float r, float g, float b) {
+    glColor3f(r, g, b);
+    glRasterPos2f(x, y);
+    for (const char* c = string; *c != '\0'; c++) {
+        glutBitmapCharacter(font, *c);
+    }
+}
+
+// --- 2D UI 및 상태별 화면 렌더링 ---
 void drawUI() {
-    // 2D 직교 투영으로 전환하여 화면에 고정된 텍스트 출력
     glMatrixMode(GL_PROJECTION);
     glPushMatrix();
     glLoadIdentity();
@@ -273,22 +339,48 @@ void drawUI() {
     glDisable(GL_LIGHTING);
     glDisable(GL_DEPTH_TEST);
 
-    // 경과 시간 계산 (밀리초)
-    int elapsedTime = glutGet(GLUT_ELAPSED_TIME) - startTime;
-    int minutes = (elapsedTime / 1000) / 60;
-    int seconds = (elapsedTime / 1000) % 60;
-    int milliseconds = elapsedTime % 1000;
+    char textBuffer[128];
 
-    char timeStr[64];
-    sprintf(timeStr, "Time: %02d:%02d.%03d", minutes, seconds, milliseconds);
+    if (currentState == MENU) {
+        // 메뉴 화면 (프로필)
+        renderText(w / 2 - 150, h / 2 + 50, GLUT_BITMAP_TIMES_ROMAN_24, "OCTAGON REVERSE GRAVITY", 0.0f, 1.0f, 1.0f);
+        if (bestTimeSeconds < 9999.0f) {
+            sprintf(textBuffer, "Best Time: %.3f sec", bestTimeSeconds);
+            renderText(w / 2 - 80, h / 2, GLUT_BITMAP_HELVETICA_18, textBuffer, 1.0f, 1.0f, 0.0f);
+        }
+        else {
+            renderText(w / 2 - 80, h / 2, GLUT_BITMAP_HELVETICA_18, "No Record Yet", 0.5f, 0.5f, 0.5f);
+        }
+        renderText(w / 2 - 100, h / 2 - 50, GLUT_BITMAP_HELVETICA_18, "Press 'ENTER' to Start", 1.0f, 1.0f, 1.0f);
+    }
+    else if (currentState == PLAYING) {
+        // 플레이 중 타이머
+        int currentElapsed = accumulatedTime + (glutGet(GLUT_ELAPSED_TIME) - startTime);
+        int minutes = (currentElapsed / 1000) / 60;
+        int seconds = (currentElapsed / 1000) % 60;
+        int milliseconds = currentElapsed % 1000;
 
-    // 텍스트 위치 및 색상 설정
-    glColor3f(1.0f, 1.0f, 1.0f); // 흰색
-    glRasterPos2f(20.0f, h - 30.0f); // 좌측 상단
+        sprintf(textBuffer, "Stage: %d / 3", currentStage);
+        renderText(20.0f, h - 30.0f, GLUT_BITMAP_HELVETICA_18, textBuffer, 1.0f, 1.0f, 1.0f);
 
-    // 문자열 한 글자씩 출력
-    for (char* c = timeStr; *c != '\0'; c++) {
-        glutBitmapCharacter(GLUT_BITMAP_HELVETICA_18, *c);
+        sprintf(textBuffer, "Time: %02d:%02d.%03d", minutes, seconds, milliseconds);
+        renderText(20.0f, h - 55.0f, GLUT_BITMAP_HELVETICA_18, textBuffer, 1.0f, 1.0f, 1.0f);
+    }
+    else if (currentState == STAGE_CLEAR) {
+        // 스테이지 클리어
+        sprintf(textBuffer, "STAGE %d CLEAR!", currentStage);
+        renderText(w / 2 - 80, h / 2 + 20, GLUT_BITMAP_TIMES_ROMAN_24, textBuffer, 0.0f, 1.0f, 0.0f);
+        renderText(w / 2 - 110, h / 2 - 20, GLUT_BITMAP_HELVETICA_18, "Press 'ENTER' for Next Stage", 1.0f, 1.0f, 1.0f);
+    }
+    else if (currentState == ALL_CLEAR) {
+        // 게임 모두 클리어
+        renderText(w / 2 - 120, h / 2 + 50, GLUT_BITMAP_TIMES_ROMAN_24, "CONGRATULATIONS!", 1.0f, 0.5f, 0.0f);
+        renderText(w / 2 - 80, h / 2 + 10, GLUT_BITMAP_HELVETICA_18, "All Stages Cleared", 1.0f, 1.0f, 1.0f);
+
+        sprintf(textBuffer, "Final Time: %.3f sec", finalClearTime / 1000.0f);
+        renderText(w / 2 - 90, h / 2 - 30, GLUT_BITMAP_HELVETICA_18, textBuffer, 1.0f, 1.0f, 0.0f);
+
+        renderText(w / 2 - 110, h / 2 - 70, GLUT_BITMAP_HELVETICA_18, "Press 'ENTER' to Return Menu", 0.8f, 0.8f, 0.8f);
     }
 
     glEnable(GL_DEPTH_TEST);
@@ -300,9 +392,35 @@ void drawUI() {
     glMatrixMode(GL_MODELVIEW);
 }
 
-// --- 마우스 클릭 처리 ---
+// --- 입력 처리 (키보드, 마우스) ---
+void keyboard(unsigned char key, int x, int y) {
+    if (key == 13) { // Enter 키
+        if (currentState == MENU) {
+            currentStage = 1;
+            accumulatedTime = 0;
+            initStage(currentStage);
+            currentState = PLAYING;
+            startTime = glutGet(GLUT_ELAPSED_TIME);
+        }
+        else if (currentState == STAGE_CLEAR) {
+            currentStage++;
+            initStage(currentStage);
+            currentState = PLAYING;
+            startTime = glutGet(GLUT_ELAPSED_TIME);
+        }
+        else if (currentState == ALL_CLEAR) {
+            loadHighScore(); // 메뉴로 돌아갈 때 최고기록 다시 갱신
+            currentState = MENU;
+        }
+    }
+    else if (currentState == PLAYING) {
+        if (key == 'a' || key == 'A') wallRotZ += 5.0f;
+        if (key == 'd' || key == 'D') wallRotZ -= 5.0f;
+    }
+}
+
 void mouse(int button, int state, int x, int y) {
-    if (button == GLUT_LEFT_BUTTON) {
+    if (currentState == PLAYING && button == GLUT_LEFT_BUTTON) {
         if (state == GLUT_DOWN) {
             isDragging = true;
             lastMouseX = x;
@@ -314,55 +432,37 @@ void mouse(int button, int state, int x, int y) {
     }
 }
 
-// --- 마우스 드래그 처리 ---
 void motion(int x, int y) {
-    if (isDragging) {
+    if (isDragging && currentState == PLAYING) {
         int dx = x - lastMouseX;
         int dy = y - lastMouseY;
-
         blockRotX += dy * 0.5f;
         blockRotY += dx * 0.5f;
-
         lastMouseX = x;
         lastMouseY = y;
     }
 }
 
-// --- 키보드 입력 처리 ---
-void keyboard(unsigned char key, int x, int y) {
-    switch (key) {
-    case 'a':
-    case 'A':
-        wallRotZ += 5.0f;
-        break;
-    case 'd':
-    case 'D':
-        wallRotZ -= 5.0f;
-        break;
-    }
-}
-
-// --- 화면 출력 함수 ---
+// --- 화면 출력 및 타이머 ---
 void display() {
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
     glLoadIdentity();
-
-    gluLookAt(0.0, 5.0, 18.0,
-        0.0, 0.0, 0.0,
-        0.0, 1.0, 0.0);
+    gluLookAt(0.0, 5.0, 18.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0);
 
     drawAndMoveStars();
-    drawOctagonWall();
-    draw3x3x3Bricks();
-    drawAndMoveBall();
 
-    // UI (타이머) 그리기 - 가장 마지막에 그려서 최상단에 띄움
-    drawUI();
+    // 게임 진행 중에만 오브젝트 렌더링
+    if (currentState == PLAYING || currentState == STAGE_CLEAR) {
+        drawOctagonWall();
+        draw3x3x3Bricks();
+        drawAndMoveBall();
+    }
+
+    drawUI(); // UI는 항상 렌더링 (상태에 따라 내용 변경)
 
     glutSwapBuffers();
 }
 
-// --- 애니메이션 타이머 ---
 void timer(int value) {
     glutPostRedisplay();
     glutTimerFunc(16, timer, 0);
@@ -380,17 +480,15 @@ int main(int argc, char** argv) {
     glutInit(&argc, argv);
     glutInitDisplayMode(GLUT_DOUBLE | GLUT_RGB | GLUT_DEPTH);
     glutInitWindowSize(800, 800);
-    glutCreateWindow("Octagon Reverse Gravity - Timer Edition");
+    glutCreateWindow("Octagon Reverse Gravity - Full Game");
 
     init();
 
     glutDisplayFunc(display);
     glutReshapeFunc(reshape);
-
+    glutKeyboardFunc(keyboard);
     glutMouseFunc(mouse);
     glutMotionFunc(motion);
-    glutKeyboardFunc(keyboard);
-
     glutTimerFunc(0, timer, 0);
 
     glutMainLoop();
