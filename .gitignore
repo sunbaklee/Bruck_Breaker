@@ -361,3 +361,6 @@ MigrationBackup/
 
 # Fody - auto-generated XML schema
 FodyWeavers.xsd
+
+# Large presentation/media files (exceeds GitHub 100MB limit)
+3D_Brick_Breaker_발표.pptx

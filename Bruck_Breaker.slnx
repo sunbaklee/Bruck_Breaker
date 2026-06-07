@@ -3,5 +3,5 @@
     <Platform Name="x64" />
     <Platform Name="x86" />
   </Configurations>
-  <Project Path="Bruck_Breaker/Bruck_Breaker.vcxproj" />
+  <Project Path="Bruck_Breaker/Bruck_Breaker.vcxproj" Id="f449fd75-793c-40dc-ad42-ac8426ebc9a8" />
 </Solution>
